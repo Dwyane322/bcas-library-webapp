@@ -11,12 +11,12 @@ import {
   ChevronRight,
   Filter,
   Download,
-  X,
   Trash2,
   Printer,
 } from "lucide-react";
 import { getBooks, createBook, updateBook, deleteBook } from "@/lib/supabase/books";
 import { getClassifications } from "@/lib/supabase/classifications";
+import Modal, { ConfirmModal } from "@/components/ui/modal";
 import type { BookWithClassification, Classification, BookStatus, MaterialType } from "@/lib/types";
 
 const statusStyles: Record<string, string> = {
@@ -51,7 +51,9 @@ const emptyForm: BookForm = {
 };
 
 interface BookFormModalProps {
+  open: boolean;
   title: string;
+  subtitle?: string;
   form: BookForm;
   setForm: (f: BookForm) => void;
   formError: string | null;
@@ -63,7 +65,9 @@ interface BookFormModalProps {
 }
 
 function BookFormModal({
+  open,
   title,
+  subtitle,
   form,
   setForm,
   formError,
@@ -74,18 +78,24 @@ function BookFormModal({
   onClose,
 }: BookFormModalProps) {
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-5 border-b border-slate-200">
-          <h3 className="text-lg font-bold text-slate-900">{title}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
-            <X className="w-5 h-5" />
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={title}
+      subtitle={subtitle}
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors">Cancel</button>
+          <button type="submit" form="book-form" disabled={submitting} className="px-4 py-2 rounded-lg bg-emerald-700 text-white text-sm font-medium hover:bg-emerald-800 transition-colors disabled:opacity-50">
+            {submitting ? "Saving..." : isEdit ? "Save Changes" : "Add Book"}
           </button>
-        </div>
-        <form onSubmit={onSubmit} className="p-5 space-y-4">
-          {formError && (
-            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">{formError}</div>
-          )}
+        </>
+      }
+    >
+      <form id="book-form" onSubmit={onSubmit} className="space-y-4">
+        {formError && (
+          <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">{formError}</div>
+        )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
               <label className="block text-sm font-medium text-slate-700 mb-1">Title *</label>
@@ -139,15 +149,8 @@ function BookFormModal({
               </label>
             </div>
           </div>
-          <div className="flex justify-end gap-3 pt-4 border-t border-slate-200">
-            <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors">Cancel</button>
-            <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-emerald-700 text-white text-sm font-medium hover:bg-emerald-800 transition-colors disabled:opacity-50">
-              {submitting ? "Saving..." : isEdit ? "Save Changes" : "Add Book"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -171,6 +174,10 @@ export default function BooksPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const [printingBook, setPrintingBook] = useState<BookWithClassification | null>(null);
+
+  const [deletingBook, setDeletingBook] = useState<BookWithClassification | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -293,13 +300,18 @@ export default function BooksPage() {
     }
   };
 
-  const handleDelete = async (book: BookWithClassification) => {
-    if (!confirm(`Delete "${book.title}"? This cannot be undone.`)) return;
+  const handleDelete = async () => {
+    if (!deletingBook) return;
+    setDeleting(true);
+    setDeleteError(null);
     try {
-      await deleteBook(book.id);
+      await deleteBook(deletingBook.id);
+      setDeletingBook(null);
       await fetchData();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Failed to delete book");
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete book");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -321,14 +333,11 @@ export default function BooksPage() {
   return (
     <>
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4 animate-fade-in-up stagger-1">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold text-slate-900">
-            Book Management
+            Books
           </h2>
-          <p className="text-sm text-slate-500 mt-1">
-            Manage catalog, categories, and inventory.
-          </p>
         </div>
         <div className="flex items-center gap-3">
           <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-colors">
@@ -344,7 +353,7 @@ export default function BooksPage() {
       </div>
 
       {/* Search & Filters */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5">
+      <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 animate-fade-in-up stagger-2">
         <div className="flex flex-col sm:flex-row gap-3 mb-6">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -476,7 +485,7 @@ export default function BooksPage() {
                           <button onClick={() => openEditModal(book)} className="text-slate-400 hover:text-slate-600 transition-colors" title="Edit">
                             <Pencil className="w-4 h-4" />
                           </button>
-                          <button onClick={() => handleDelete(book)} className="text-slate-400 hover:text-red-600 transition-colors" title="Delete">
+                          <button onClick={() => setDeletingBook(book)} className="text-slate-400 hover:text-red-600 transition-colors" title="Delete">
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
@@ -528,70 +537,79 @@ export default function BooksPage() {
       </div>
 
       {/* Add Book Modal */}
-      {showAddModal && (
-        <BookFormModal
-          title="Add New Book"
-          form={form}
-          setForm={setForm}
-          formError={formError}
-          classifications={classifications}
-          submitting={submitting}
-          isEdit={false}
-          onSubmit={handleAddSubmit}
-          onClose={() => setShowAddModal(false)}
-        />
-      )}
+      <BookFormModal
+        open={showAddModal}
+        title="Add New Book"
+        subtitle="Enter the book details below."
+        form={form}
+        setForm={setForm}
+        formError={formError}
+        classifications={classifications}
+        submitting={submitting}
+        isEdit={false}
+        onSubmit={handleAddSubmit}
+        onClose={() => setShowAddModal(false)}
+      />
 
       {/* Edit Book Modal */}
-      {showEditModal && (
-        <BookFormModal
-          title="Edit Book"
-          form={form}
-          setForm={setForm}
-          formError={formError}
-          classifications={classifications}
-          submitting={submitting}
-          isEdit={true}
-          onSubmit={handleEditSubmit}
-          onClose={() => { setShowEditModal(false); setEditingBook(null); }}
-        />
-      )}
+      <BookFormModal
+        open={showEditModal}
+        title="Edit Book"
+        subtitle={editingBook ? `Updating "${editingBook.title}"` : undefined}
+        form={form}
+        setForm={setForm}
+        formError={formError}
+        classifications={classifications}
+        submitting={submitting}
+        isEdit={true}
+        onSubmit={handleEditSubmit}
+        onClose={() => { setShowEditModal(false); setEditingBook(null); }}
+      />
+
+      {/* Delete Confirm Modal */}
+      <ConfirmModal
+        open={!!deletingBook}
+        onClose={() => { setDeletingBook(null); setDeleteError(null); }}
+        onConfirm={handleDelete}
+        title="Delete Book"
+        message={deleteError ?? (deletingBook ? `Delete "${deletingBook.title}" by ${deletingBook.author}? This cannot be undone.` : "")}
+        confirmLabel="Delete"
+        confirming={deleting}
+      />
 
       {/* Print QR Modal */}
-      {printingBook && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setPrintingBook(null)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-5 border-b border-slate-200">
-              <h3 className="text-lg font-bold text-slate-900">Print QR Code</h3>
-              <button onClick={() => setPrintingBook(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6">
-              <div data-print-label className="flex flex-col items-center">
-                <QRCodeSVG
-                  value={getQrUrl(printingBook.id)}
-                  size={180}
-                  level="M"
-                  includeMargin
-                />
-                <div className="mt-4 text-center">
-                  <p className="text-sm font-bold text-slate-900">{printingBook.title}</p>
-                  <p className="text-xs text-slate-500">{printingBook.author}</p>
-                  <p className="text-xs text-slate-400 mt-1">Accession #: {printingBook.accession_number}</p>
-                </div>
-              </div>
-              <button
-                onClick={printLabel}
-                className="w-full mt-6 flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-emerald-700 text-white text-sm font-semibold hover:bg-emerald-800 transition-colors"
-              >
-                <Printer className="w-4 h-4" />
-                Print Label
-              </button>
+      <Modal
+        open={!!printingBook}
+        onClose={() => setPrintingBook(null)}
+        title="Print QR Code"
+        subtitle={printingBook ? printingBook.title : undefined}
+        size="sm"
+        footer={
+          <button
+            onClick={printLabel}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-emerald-700 text-white text-sm font-semibold hover:bg-emerald-800 transition-colors"
+          >
+            <Printer className="w-4 h-4" />
+            Print Label
+          </button>
+        }
+      >
+        {printingBook && (
+          <div data-print-label className="flex flex-col items-center">
+            <QRCodeSVG
+              value={getQrUrl(printingBook.id)}
+              size={180}
+              level="M"
+              includeMargin
+            />
+            <div className="mt-4 text-center">
+              <p className="text-sm font-bold text-slate-900">{printingBook.title}</p>
+              <p className="text-xs text-slate-500">{printingBook.author}</p>
+              <p className="text-xs text-slate-400 mt-1">Accession #: {printingBook.accession_number}</p>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
     </>
   );
 }

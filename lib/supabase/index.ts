@@ -25,10 +25,14 @@ export {
 export {
   getStudents,
   getStudentById,
+  getStudentByNumber,
   searchStudents,
   createStudent,
   updateStudent,
+  upsertStudent,
+  upsertStudents,
   deleteStudent,
+  getStudentCount,
 } from "./students";
 
 export {
@@ -59,6 +63,7 @@ export {
   markNotificationRead,
   markAllNotificationsRead,
   getStudentNotifications,
+  getNotificationsWithDetails,
 } from "./notifications";
 
 export {
@@ -71,3 +76,37 @@ export {
   getTopVisitors,
   getTopBorrowers,
 } from "./dashboard";
+
+export {
+  getFineSettings,
+  updateFineSettings,
+  calculateFine,
+  payFine,
+  updateTransactionFine,
+  getStudentFines,
+  getPendingFinesTotal,
+  getPaidFinesTotal,
+} from "./fines";
+
+export {
+  getSchoolYears,
+  getActiveSchoolYear,
+  createSchoolYear,
+  updateSchoolYear,
+  setActiveSchoolYear,
+  deleteSchoolYear,
+  getSchoolYearSummaries,
+} from "./school-years";
+
+export {
+  getStaff,
+  getActiveStaff,
+  getStaffByUserId,
+  createStaff,
+  updateStaff,
+  deleteStaff,
+  isStaffActive,
+  getStaffRole,
+  setStaffPassword,
+  setStaffPasswordByUserId,
+} from "./staff";

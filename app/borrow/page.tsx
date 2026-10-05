@@ -4,7 +4,7 @@ import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { BookOpen, CheckCircle, XCircle, Loader2 } from "lucide-react";
 import { getBookById } from "@/lib/supabase/books";
-import { getStudentById } from "@/lib/supabase/students";
+import { getStudentByNumber } from "@/lib/supabase/students";
 import { borrowBook } from "@/lib/supabase/transactions";
 import type { BookWithClassification, Student } from "@/lib/types";
 
@@ -21,6 +21,7 @@ function BorrowForm() {
   const [studentId, setStudentId] = useState("");
   const [student, setStudent] = useState<Student | null>(null);
   const [studentLoading, setStudentLoading] = useState(false);
+  const [studentError, setStudentError] = useState<string | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -47,16 +48,21 @@ function BorrowForm() {
 
   const handleStudentIdChange = async (value: string) => {
     setStudentId(value);
+    setStudentError(null);
     if (!value.trim()) {
       setStudent(null);
       return;
     }
     setStudentLoading(true);
     try {
-      const s = await getStudentById(value.trim());
+      const s = await getStudentByNumber(value.trim());
       setStudent(s);
+      if (!s) {
+        setStudentError(`No student found with ID "${value.trim()}".`);
+      }
     } catch {
       setStudent(null);
+      setStudentError(`No student found with ID "${value.trim()}".`);
     } finally {
       setStudentLoading(false);
     }
@@ -67,7 +73,7 @@ function BorrowForm() {
     setSubmitting(true);
     setResult(null);
     try {
-      const tx = await borrowBook(student.name, book.id);
+      const tx = await borrowBook(studentId.trim(), book.id);
       const wasReturned = tx.status === "Returned";
       setResult({
         success: true,
@@ -172,7 +178,15 @@ function BorrowForm() {
                   <div>
                     <p className="text-sm font-medium text-slate-900">{student.name}</p>
                     <p className="text-xs text-slate-500">Section: {student.section}</p>
+                    {student.grade_level && (
+                      <p className="text-xs text-slate-500">Grade: {student.grade_level}</p>
+                    )}
+                    {student.program && (
+                      <p className="text-xs text-slate-500">Program: {student.program}</p>
+                    )}
                   </div>
+                ) : studentError ? (
+                  <p className="text-sm text-red-600 text-center">{studentError}</p>
                 ) : (
                   <p className="text-sm text-slate-400 italic text-center">
                     Enter your student ID to continue.

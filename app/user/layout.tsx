@@ -1,11 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Bell,
-  HelpCircle,
   LogOut,
   Settings,
   LayoutDashboard,
@@ -15,8 +14,16 @@ import {
   Menu,
   X,
   ArrowLeftRight,
+  Upload,
+  User,
 } from "lucide-react";
-import { logout } from "@/app/auth/actions";
+import { logout, getSession } from "@/app/auth/actions";
+import type { SessionData } from "@/app/auth/actions";
+import {
+  getNotificationsWithDetails,
+  markNotificationRead,
+} from "@/lib/supabase";
+import type { NotificationWithDetails } from "@/lib/types";
 
 const sidebarNav = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/user" },
@@ -24,17 +31,68 @@ const sidebarNav = [
   { label: "Books", icon: BookOpen, href: "/user/books" },
   { label: "Transactions", icon: ClipboardList, href: "/user/transactions" },
   { label: "Reports", icon: BarChart3, href: "/user/reports" },
+  { label: "Import", icon: Upload, href: "/user/import", adminOnly: true },
 ];
 
 export default function UserLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [session, setSession] = useState<SessionData | null>(null);
+  const [notifications, setNotifications] = useState<NotificationWithDetails[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    getSession().then(setSession);
+  }, []);
+
+  useEffect(() => {
+    getNotificationsWithDetails()
+      .then((data) => {
+        setNotifications(data.slice(0, 5));
+        setUnreadCount(data.filter((n) => !n.is_read).length);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleNotifEnter = useCallback(() => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+    setNotifOpen(true);
+  }, []);
+
+  const handleNotifLeave = useCallback(() => {
+    closeTimeoutRef.current = setTimeout(() => setNotifOpen(false), 200);
+  }, []);
+
+  const handleMarkRead = useCallback(async (id: string) => {
+    try {
+      await markNotificationRead(id);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
+      );
+      setUnreadCount((prev) => Math.max(0, prev - 1));
+    } catch {
+      // silent
+    }
+  }, []);
 
   const handleLogout = async () => {
     await logout();
     router.push("/");
   };
+
+  const filteredNav = sidebarNav.filter(item => {
+    if (item.adminOnly && session?.role !== "Admin") {
+      return false;
+    }
+    return true;
+  });
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
@@ -73,7 +131,7 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
         </div>
 
         <nav className="flex-1 px-3 space-y-1">
-          {sidebarNav.map((item) => {
+          {filteredNav.map((item) => {
             const isActive = item.href === "/user"
               ? pathname === "/user"
               : pathname.startsWith(item.href);
@@ -129,13 +187,128 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
             <Menu className="w-5 h-5" />
           </button>
           <div className="flex items-center gap-2 sm:gap-4 ml-auto">
-            <button className="relative text-slate-500 hover:text-slate-700">
-              <Bell className="w-5 h-5" />
-              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white" />
-            </button>
-            <button className="text-slate-500 hover:text-slate-700 hidden sm:block">
-              <HelpCircle className="w-5 h-5" />
-            </button>
+            {session && (
+              <div className="hidden sm:flex items-center gap-2 text-sm">
+                <span className="text-slate-500">Welcome,</span>
+                <span className="font-medium text-slate-700">{session.name}</span>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-medium">
+                  {session.role}
+                </span>
+              </div>
+            )}
+            <div
+              ref={notifRef}
+              onMouseEnter={handleNotifEnter}
+              onMouseLeave={handleNotifLeave}
+              className="relative"
+            >
+              <button
+                onClick={() => router.push("/user/notifications")}
+                className="relative text-slate-500 hover:text-slate-700"
+              >
+                <Bell className="w-5 h-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold border-2 border-white">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {notifOpen && (
+                <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-xl shadow-xl border border-slate-200 z-50 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-slate-800">Notifications</span>
+                      {unreadCount > 0 && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-medium">
+                          {unreadCount}
+                        </span>
+                      )}
+                    </div>
+                    {unreadCount > 0 && (
+                      <button
+                        onClick={async () => {
+                          try {
+                            const { markAllNotificationsRead } = await import("@/lib/supabase");
+                            await markAllNotificationsRead();
+                            setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+                            setUnreadCount(0);
+                          } catch {}
+                        }}
+                        className="text-xs text-emerald-600 hover:text-emerald-800 font-medium"
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="max-h-80 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <div className="py-8 text-center">
+                        <Bell className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                        <p className="text-sm text-slate-400">No notifications yet.</p>
+                      </div>
+                    ) : (
+                      notifications.map((n) => (
+                        <div
+                          key={n.id}
+                          onClick={() => {
+                            if (!n.is_read) handleMarkRead(n.id);
+                          }}
+                          className={`flex items-start gap-3 px-4 py-3 border-b border-slate-50 last:border-0 transition-colors ${
+                            n.is_read
+                              ? "bg-white hover:bg-slate-50"
+                              : "bg-emerald-50/40 cursor-pointer hover:bg-emerald-50"
+                          }`}
+                        >
+                          <div
+                            className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                              n.is_read ? "bg-slate-100" : "bg-emerald-100"
+                            }`}
+                          >
+                            <Bell
+                              className={`w-4 h-4 ${
+                                n.is_read ? "text-slate-400" : "text-emerald-600"
+                              }`}
+                            />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p
+                              className={`text-sm leading-snug ${
+                                n.is_read ? "text-slate-600" : "text-slate-800 font-medium"
+                              }`}
+                            >
+                              {n.message}
+                            </p>
+                            <div className="flex items-center gap-2 mt-1 text-xs text-slate-400">
+                              {n.students && (
+                                <span className="flex items-center gap-1">
+                                  <User className="w-3 h-3" />
+                                  {n.students.name}
+                                </span>
+                              )}
+                              <span>
+                                {new Date(n.created_at).toLocaleDateString()}
+                              </span>
+                            </div>
+                          </div>
+                          {!n.is_read && (
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 mt-2" />
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <Link
+                    href="/user/notifications"
+                    className="block text-center px-4 py-2.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50 border-t border-slate-100 transition-colors"
+                  >
+                    View More
+                  </Link>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 

@@ -1,5 +1,5 @@
 import { createClient } from "@/utils/client";
-import type { Notification } from "@/lib/types";
+import type { Notification, NotificationWithDetails } from "@/lib/types";
 
 const supabase = createClient();
 
@@ -67,4 +67,15 @@ export async function getStudentNotifications(studentId: string): Promise<Notifi
 
   if (error) throw error;
   return data ?? [];
+}
+
+/** Get all notifications with student and book details */
+export async function getNotificationsWithDetails(): Promise<NotificationWithDetails[]> {
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("*, students(id, name, student_number, section), books(id, title, author)")
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return (data ?? []) as NotificationWithDetails[];
 }

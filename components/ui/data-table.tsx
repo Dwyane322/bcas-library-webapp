@@ -14,6 +14,8 @@ interface DataTableProps<T extends Record<string, any>> {
   data: T[];
   pageSize?: number;
   keyExtractor: (row: T) => string;
+  onRowClick?: (row: T) => void;
+  emptyMessage?: string;
 }
 
 export default function DataTable<T extends Record<string, any>>({
@@ -21,6 +23,8 @@ export default function DataTable<T extends Record<string, any>>({
   data,
   pageSize = 5,
   keyExtractor,
+  onRowClick,
+  emptyMessage = "No results found.",
 }: DataTableProps<T>) {
   const [page, setPage] = useState(1);
   const totalPages = Math.ceil(data.length / pageSize);
@@ -45,20 +49,34 @@ export default function DataTable<T extends Record<string, any>>({
               </tr>
             </thead>
             <tbody>
-              {pageData.map((row) => (
-                <tr
-                  key={keyExtractor(row)}
-                  className="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors"
-                >
-                  {columns.map((col) => (
-                    <td key={col.key} className="px-4 sm:px-5 py-4">
-                      {col.render
-                        ? col.render(row)
-                        : (row[col.key] as ReactNode)}
-                    </td>
-                  ))}
+              {pageData.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={columns.length}
+                    className="px-4 sm:px-5 py-12 text-center text-slate-400 text-sm"
+                  >
+                    {emptyMessage}
+                  </td>
                 </tr>
-              ))}
+              ) : (
+                pageData.map((row) => (
+                  <tr
+                    key={keyExtractor(row)}
+                    onClick={() => onRowClick?.(row)}
+                    className={`border-b border-slate-50 last:border-0 transition-colors ${
+                      onRowClick ? "hover:bg-slate-50 cursor-pointer" : "hover:bg-slate-50"
+                    }`}
+                  >
+                    {columns.map((col) => (
+                      <td key={col.key} className="px-4 sm:px-5 py-4">
+                        {col.render
+                          ? col.render(row)
+                          : (row[col.key] as ReactNode)}
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
