@@ -16,8 +16,10 @@ import {
 } from "lucide-react";
 import { getBooks, createBook, updateBook, deleteBook } from "@/lib/supabase/books";
 import { getClassifications } from "@/lib/supabase/classifications";
+import { getSession } from "@/app/auth/actions";
+import { canEdit, canDelete, STAFF_RESTRICTED_MESSAGE } from "@/lib/permissions";
 import Modal, { ConfirmModal } from "@/components/ui/modal";
-import type { BookWithClassification, Classification, BookStatus, MaterialType } from "@/lib/types";
+import type { BookWithClassification, Classification, BookStatus, MaterialType, StaffRole } from "@/lib/types";
 
 const statusStyles: Record<string, string> = {
   Available: "bg-emerald-50 text-emerald-700 border border-emerald-200",
@@ -179,15 +181,23 @@ export default function BooksPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  const [role, setRole] = useState<StaffRole | null>(null);
+  // Optimistic until the session loads: only an explicit Staff role is restricted.
+  const staffRestricted = role === "Staff";
+  const allowEdit = role ? canEdit(role) : true;
+  const allowDelete = role ? canDelete(role) : true;
+
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const [booksData, classData] = await Promise.all([
+      const [booksData, classData, session] = await Promise.all([
         getBooks(),
         getClassifications(),
+        getSession(),
       ]);
       setBooks(booksData);
       setClassifications(classData);
+      if (session) setRole(session.role);
       setError(null);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load books");
@@ -223,6 +233,10 @@ export default function BooksPage() {
   };
 
   const openEditModal = (book: BookWithClassification) => {
+    if (!allowEdit) {
+      setError(STAFF_RESTRICTED_MESSAGE);
+      return;
+    }
     setForm({
       title: book.title,
       author: book.author,
@@ -302,6 +316,10 @@ export default function BooksPage() {
 
   const handleDelete = async () => {
     if (!deletingBook) return;
+    if (!allowDelete) {
+      setDeleteError(STAFF_RESTRICTED_MESSAGE);
+      return;
+    }
     setDeleting(true);
     setDeleteError(null);
     try {
@@ -330,19 +348,52 @@ export default function BooksPage() {
     window.print();
   };
 
+  const handleExportCSV = () => {
+    const header = "Title,Author,Accession Number,Category,Shelf Location,Material Type,Status,Library Use Only\n";
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const body = filtered
+      .map((b) =>
+        [
+          esc(b.title),
+          esc(b.author),
+          esc(b.accession_number),
+          esc(b.classifications?.name ?? ""),
+          esc(b.shelf_location ?? ""),
+          esc(b.material_type),
+          esc(b.status),
+          b.is_library_use_only ? "Yes" : "No",
+        ].join(",")
+      )
+      .join("\n");
+    const blob = new Blob([header + body], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `books_${new Date().toISOString().split("T")[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  const handlePrintList = () => {
+    window.print();
+  };
+
   return (
     <>
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4 animate-fade-in-up stagger-1">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4 animate-fade-in-up stagger-1 no-print">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold text-slate-900">
             Books
           </h2>
         </div>
         <div className="flex items-center gap-3">
-          <button className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-colors">
+          <button onClick={handleExportCSV} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-colors no-print">
             <Download className="w-4 h-4" />
             <span className="hidden sm:inline">Export</span>
+          </button>
+          <button onClick={handlePrintList} className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 transition-colors no-print">
+            <Printer className="w-4 h-4" />
+            <span>Print</span>
           </button>
           <button onClick={openAddModal} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-700 text-white text-sm font-medium hover:bg-emerald-800 transition-colors">
             <Plus className="w-4 h-4" />
@@ -353,8 +404,20 @@ export default function BooksPage() {
       </div>
 
       {/* Search & Filters */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 animate-fade-in-up stagger-2">
-        <div className="flex flex-col sm:flex-row gap-3 mb-6">
+      <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 animate-fade-in-up stagger-2" data-print-area>
+        <div className="hidden print:block mb-4 print-header">
+          <h2 className="text-xl font-bold text-slate-900">BCAS Library — Books Inventory</h2>
+          <p className="text-sm text-slate-500">
+            Generated {new Date().toLocaleString()} • {filtered.length} record(s)
+            {search || category !== "all" || status !== "all" ? " (filtered)" : ""}
+          </p>
+        </div>
+        {staffRestricted && (
+          <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800 no-print">
+            {STAFF_RESTRICTED_MESSAGE} Deleted books can be reviewed under Archive by a Librarian or Admin.
+          </div>
+        )}
+        <div className="flex flex-col sm:flex-row gap-3 mb-6 no-print">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
@@ -410,7 +473,7 @@ export default function BooksPage() {
         )}
 
         {/* Table */}
-        <div className="overflow-x-auto -mx-4 sm:mx-0">
+        <div className="overflow-x-auto -mx-4 sm:mx-0 print:hidden">
           <div className="inline-block min-w-full align-middle px-4 sm:px-0">
             <table className="w-full text-sm">
               <thead>
@@ -478,16 +541,20 @@ export default function BooksPage() {
                         </span>
                       </td>
                       <td className="px-4 py-4">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 no-print">
                           <button onClick={() => handlePrintQr(book)} className="text-slate-400 hover:text-emerald-600 transition-colors" title="Print QR Code">
                             <Printer className="w-4 h-4" />
                           </button>
-                          <button onClick={() => openEditModal(book)} className="text-slate-400 hover:text-slate-600 transition-colors" title="Edit">
-                            <Pencil className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => setDeletingBook(book)} className="text-slate-400 hover:text-red-600 transition-colors" title="Delete">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {allowEdit && (
+                            <button onClick={() => openEditModal(book)} className="text-slate-400 hover:text-slate-600 transition-colors" title="Edit">
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                          )}
+                          {allowDelete && (
+                            <button onClick={() => setDeletingBook(book)} className="text-slate-400 hover:text-red-600 transition-colors" title="Delete">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -498,8 +565,40 @@ export default function BooksPage() {
           </div>
         </div>
 
+        {/* Print-only full list (screen table is paginated) */}
+        <div className="hidden print:block">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200">
+                <th className="text-left px-2 py-2 font-semibold text-slate-500">Title &amp; Author</th>
+                <th className="text-left px-2 py-2 font-semibold text-slate-500">Accession #</th>
+                <th className="text-left px-2 py-2 font-semibold text-slate-500">Category</th>
+                <th className="text-left px-2 py-2 font-semibold text-slate-500">Shelf</th>
+                <th className="text-left px-2 py-2 font-semibold text-slate-500">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((book) => (
+                <tr key={book.id} className="border-b border-slate-100">
+                  <td className="px-2 py-2">
+                    <div className="font-medium text-slate-800">{book.title}</div>
+                    <div className="text-xs text-slate-500">{book.author}</div>
+                  </td>
+                  <td className="px-2 py-2 font-mono text-xs text-slate-600">{book.accession_number}</td>
+                  <td className="px-2 py-2 text-slate-600">{book.classifications?.name}</td>
+                  <td className="px-2 py-2 font-mono text-xs text-slate-600">{book.shelf_location ?? "—"}</td>
+                  <td className="px-2 py-2 text-slate-600">{book.status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filtered.length === 0 && (
+            <p className="py-8 text-center text-slate-400 text-sm">No books found.</p>
+          )}
+        </div>
+
         {/* Pagination */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t border-slate-100">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t border-slate-100 no-print">
           <p className="text-sm text-slate-500">
             Showing {filtered.length > 0 ? start : 0} to {end} of{" "}
             {filtered.length} entries

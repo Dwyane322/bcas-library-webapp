@@ -52,6 +52,9 @@ export interface BorrowingTransaction {
   fine_amount: number;
   fine_paid: boolean;
   school_year_id: string | null;
+  handled_by_staff_id: string | null;
+  handled_by_name: string | null;
+  handled_by_role: StaffRole | null;
   created_at: string;
 }
 
@@ -180,6 +183,59 @@ export interface ActiveUserRow {
   section: string;
   total_visits: number;
   total_borrowed: number;
+}
+
+// ============================================================
+// Activity Log + Delete Archive (audit trail)
+// ============================================================
+
+export type ActivityAction =
+  | "ADD"
+  | "EDIT"
+  | "DELETE"
+  | "BORROW"
+  | "RETURN"
+  | "RESTORE"
+  | "PERMANENT_DELETE";
+
+export type ActivityEntity =
+  | "book"
+  | "transaction"
+  | "student"
+  | "staff"
+  | "school_year"
+  | "fine"
+  | "archive";
+
+export interface ActorInfo {
+  staffId: string;
+  name: string;
+  role: StaffRole;
+}
+
+export interface ActivityLog {
+  id: string;
+  staff_id: string | null;
+  staff_name: string | null;
+  staff_role: StaffRole | null;
+  action: ActivityAction;
+  entity_type: ActivityEntity;
+  entity_id: string | null;
+  description: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface ArchivedRecord {
+  id: string;
+  entity_type: string;
+  entity_id: string | null;
+  data: Record<string, unknown> | null;
+  deleted_by_staff_id: string | null;
+  deleted_by_name: string | null;
+  deleted_by_role: StaffRole | string | null;
+  deleted_at: string;
+  restored: boolean;
 }
 
 

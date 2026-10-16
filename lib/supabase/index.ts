@@ -44,6 +44,8 @@ export {
   canStudentBorrow,
   borrowBook,
   returnBook,
+  updateTransactionDetails,
+  deleteTransaction,
   updateOverdueStatus,
   getOverdueTransactions,
 } from "./transactions";
@@ -110,3 +112,17 @@ export {
   setStaffPassword,
   setStaffPasswordByUserId,
 } from "./staff";
+
+export {
+  logActivity,
+  getActivityLogs,
+  deleteActivityLog,
+  getCurrentActor,
+} from "./activity-logs";
+
+export {
+  archiveRecord,
+  getArchivedRecords,
+  restoreArchivedBook,
+  permanentlyDeleteArchived,
+} from "./archive";

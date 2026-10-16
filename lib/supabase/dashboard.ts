@@ -157,12 +157,14 @@ export async function getTopVisitors(year?: number): Promise<AwardWinner[]> {
 
   // Count visits per student
   const counts: Record<string, { name: string; section: string; count: number }> = {};
-  (data ?? []).forEach((v: any) => {
+  (data ?? []).forEach((v: { student_id: string; students?: unknown }) => {
     const sid = v.student_id;
+    const joined = Array.isArray(v.students) ? v.students[0] : v.students;
+    const student = (joined ?? {}) as { name?: unknown; section?: unknown };
     if (!counts[sid]) {
       counts[sid] = {
-        name: v.students?.name ?? "Unknown",
-        section: v.students?.section ?? "",
+        name: typeof student.name === "string" ? student.name : "Unknown",
+        section: typeof student.section === "string" ? student.section : "",
         count: 0,
       };
     }
@@ -194,12 +196,14 @@ export async function getTopBorrowers(year?: number): Promise<AwardWinner[]> {
   if (error) throw error;
 
   const counts: Record<string, { name: string; section: string; count: number }> = {};
-  (data ?? []).forEach((tx: any) => {
+  (data ?? []).forEach((tx: { student_id: string; students?: unknown }) => {
     const sid = tx.student_id;
+    const joined = Array.isArray(tx.students) ? tx.students[0] : tx.students;
+    const student = (joined ?? {}) as { name?: unknown; section?: unknown };
     if (!counts[sid]) {
       counts[sid] = {
-        name: tx.students?.name ?? "Unknown",
-        section: tx.students?.section ?? "",
+        name: typeof student.name === "string" ? student.name : "Unknown",
+        section: typeof student.section === "string" ? student.section : "",
         count: 0,
       };
     }

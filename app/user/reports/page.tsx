@@ -140,6 +140,7 @@ export default function ReportsPage() {
     link.href = URL.createObjectURL(blob);
     link.download = filename;
     link.click();
+    URL.revokeObjectURL(link.href);
   };
 
   const handlePrint = () => {
@@ -148,7 +149,7 @@ export default function ReportsPage() {
 
   return (
     <>
-      <div className="animate-fade-in-up stagger-1">
+      <div className="animate-fade-in-up stagger-1 no-print">
         <PageHeader
         title="Reports & Analytics"
         actions={
@@ -192,6 +193,17 @@ export default function ReportsPage() {
           </>
         }
       />
+      </div>
+
+      <div data-print-area>
+      {/* Print-only report header */}
+      <div className="hidden print:block mb-4 print-header">
+        <h2 className="text-xl font-bold text-slate-900">
+          BCAS Library — {reportType === "circulation" ? "Circulation Summary" : reportType === "overdue" ? "Overdue Report" : reportType === "popular" ? "Popular Books" : "School Year Summary"}
+        </h2>
+        <p className="text-sm text-slate-500">
+          Generated {new Date().toLocaleString()} • Range: {dateRange === "7d" ? "Last 7 Days" : dateRange === "90d" ? "Last 90 Days" : dateRange === "year" ? "This Year" : "Last 30 Days"}
+        </p>
       </div>
 
       {/* Stats cards */}
@@ -397,6 +409,7 @@ export default function ReportsPage() {
           </div>
         </div>
       )}
+      </div>
     </>
   );
 }

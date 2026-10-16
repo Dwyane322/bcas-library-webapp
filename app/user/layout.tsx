@@ -16,6 +16,8 @@ import {
   ArrowLeftRight,
   Upload,
   User,
+  Archive,
+  ScrollText,
 } from "lucide-react";
 import { logout, getSession } from "@/app/auth/actions";
 import type { SessionData } from "@/app/auth/actions";
@@ -24,14 +26,23 @@ import {
   markNotificationRead,
 } from "@/lib/supabase";
 import type { NotificationWithDetails } from "@/lib/types";
+import { ConfirmModal } from "@/components/ui/modal";
 
-const sidebarNav = [
+const sidebarNav: {
+  label: string;
+  icon: typeof LayoutDashboard;
+  href: string;
+  adminOnly?: boolean;
+  hideForStaff?: boolean;
+}[] = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/user" },
   { label: "Circulation", icon: ArrowLeftRight, href: "/user/scan" },
   { label: "Books", icon: BookOpen, href: "/user/books" },
   { label: "Transactions", icon: ClipboardList, href: "/user/transactions" },
   { label: "Reports", icon: BarChart3, href: "/user/reports" },
-  { label: "Import", icon: Upload, href: "/user/import", adminOnly: true },
+  { label: "Activity Logs", icon: ScrollText, href: "/user/logs" },
+  { label: "Archive", icon: Archive, href: "/user/archive" },
+  { label: "Import", icon: Upload, href: "/user/import", hideForStaff: true },
 ];
 
 export default function UserLayout({ children }: { children: React.ReactNode }) {
@@ -42,6 +53,8 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
   const [notifications, setNotifications] = useState<NotificationWithDetails[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notifRef = useRef<HTMLDivElement>(null);
 
@@ -83,12 +96,21 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
   }, []);
 
   const handleLogout = async () => {
-    await logout();
-    router.push("/");
+    setLoggingOut(true);
+    try {
+      await logout();
+      router.push("/");
+    } finally {
+      setLoggingOut(false);
+      setLogoutOpen(false);
+    }
   };
 
   const filteredNav = sidebarNav.filter(item => {
     if (item.adminOnly && session?.role !== "Admin") {
+      return false;
+    }
+    if (item.hideForStaff && session?.role === "Staff") {
       return false;
     }
     return true;
@@ -106,11 +128,11 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-emerald-800 text-white transform transition-transform duration-200 ease-in-out lg:relative lg:translate-x-0 lg:flex lg:flex-col shrink-0 ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-emerald-800 text-white flex flex-col transform transition-transform duration-200 ease-in-out lg:relative lg:translate-x-0 shrink-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="p-6 border-b border-emerald-700">
+        <div className="p-6 border-b border-emerald-700 shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center">
@@ -130,7 +152,7 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
           </div>
         </div>
 
-        <nav className="flex-1 px-3 space-y-1">
+        <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-1 overscroll-contain">
           {filteredNav.map((item) => {
             const isActive = item.href === "/user"
               ? pathname === "/user"
@@ -153,7 +175,7 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
           })}
         </nav>
 
-        <div className="p-3 border-t border-emerald-700 space-y-1">
+        <div className="p-3 border-t border-emerald-700 space-y-1 shrink-0">
           <Link
             href="/user/settings"
             onClick={() => setSidebarOpen(false)}
@@ -167,7 +189,7 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
             Settings
           </Link>
           <button
-            onClick={handleLogout}
+            onClick={() => setLogoutOpen(true)}
             className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-red-300 hover:bg-emerald-700 transition-colors w-full"
           >
             <LogOut className="w-5 h-5" />
@@ -180,22 +202,24 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
         <header className="h-14 sm:h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-6 shrink-0 gap-3">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="lg:hidden p-2 -ml-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-          <div className="flex items-center gap-2 sm:gap-4 ml-auto">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="lg:hidden p-2 -ml-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 shrink-0"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
             {session && (
-              <div className="hidden sm:flex items-center gap-2 text-sm">
-                <span className="text-slate-500">Welcome,</span>
-                <span className="font-medium text-slate-700">{session.name}</span>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-medium">
+              <div className="flex items-center gap-2 text-sm min-w-0">
+                <span className="text-slate-500 shrink-0">Welcome,</span>
+                <span className="font-medium text-slate-700 truncate">{session.name}</span>
+                <span className="hidden sm:inline-block px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-medium shrink-0">
                   {session.role}
                 </span>
               </div>
             )}
+          </div>
+          <div className="flex items-center gap-2 sm:gap-4 ml-auto">
             <div
               ref={notifRef}
               onMouseEnter={handleNotifEnter}
@@ -315,6 +339,16 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
         {/* Page content */}
         <main className="flex-1 overflow-auto p-4 sm:p-6">{children}</main>
       </div>
+
+      <ConfirmModal
+        open={logoutOpen}
+        onClose={() => !loggingOut && setLogoutOpen(false)}
+        onConfirm={handleLogout}
+        title="Log out?"
+        message="Are you sure you want to log out? You'll need to sign in again to continue."
+        confirmLabel="Logout"
+        confirming={loggingOut}
+      />
     </div>
   );
 }

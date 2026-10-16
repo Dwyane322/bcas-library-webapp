@@ -1,7 +1,24 @@
 import { createClient } from "@/utils/client";
-import type { BorrowingTransaction, BorrowingTransactionWithDetails } from "@/lib/types";
+import { logActivity, getCurrentActor } from "@/lib/supabase/activity-logs";
+import { archiveRecord } from "@/lib/supabase/archive";
+import type { ActorInfo, BorrowingTransaction, BorrowingTransactionWithDetails } from "@/lib/types";
 
 const supabase = createClient();
+
+/** True when an error is caused by the 005-migration columns not existing yet. */
+function isMissingColumnError(error: unknown): boolean {
+  const msg =
+    (error as { message?: string })?.message ?? (error instanceof Error ? error.message : String(error));
+  return /handled_by|column .* does not exist|schema cache|could not find/i.test(msg);
+}
+
+function handledByColumns(actor: ActorInfo | null | undefined): Record<string, string | null> {
+  return {
+    handled_by_staff_id: actor?.staffId ?? null,
+    handled_by_name: actor?.name ?? null,
+    handled_by_role: (actor?.role as string | undefined) ?? null,
+  };
+}
 
 // ── Read ──────────────────────────────────────────────────────
 
@@ -88,7 +105,10 @@ export async function canStudentBorrow(studentId: string): Promise<boolean> {
 export async function borrowBook(
   studentNumber: string,
   bookId: string,
+  actor?: ActorInfo | null,
 ): Promise<BorrowingTransaction> {
+  const resolved = actor ?? (await getCurrentActor().catch(() => null));
+
   // Auto-return mode: no student number, just return the book directly
   if (!studentNumber.trim()) {
     const { data: activeTx, error: txError } = await supabase
@@ -100,7 +120,7 @@ export async function borrowBook(
 
     if (txError || !activeTx)
       throw new Error("No active borrow found for this book.");
-    return returnBook(activeTx.id);
+    return returnBook(activeTx.id, resolved);
   }
 
   // 1. Find student by student_number (must exist in the system)
@@ -124,7 +144,7 @@ export async function borrowBook(
     .single();
 
   if (existingTx) {
-    return returnBook(existingTx.id);
+    return returnBook(existingTx.id, resolved);
   }
 
   // 3. Check student borrow limit
@@ -148,27 +168,61 @@ export async function borrowBook(
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + 5);
 
-  const { data, error } = await supabase
+  const insertPayload: Record<string, unknown> = {
+    student_id: student.id,
+    book_id: bookId,
+    due_date: dueDate.toISOString(),
+    status: "Active",
+    ...handledByColumns(resolved),
+  };
+
+  let { data, error } = await supabase
     .from("borrowing_transactions")
-    .insert({
-      student_id: student.id,
-      book_id: bookId,
-      due_date: dueDate.toISOString(),
-      status: "Active",
-    })
+    .insert(insertPayload)
     .select()
     .single();
 
+  // Pre-005-migration DBs lack the handled_by_* columns — retry without them.
+  if (error && isMissingColumnError(error)) {
+    delete insertPayload.handled_by_staff_id;
+    delete insertPayload.handled_by_name;
+    delete insertPayload.handled_by_role;
+    const retry = await supabase
+      .from("borrowing_transactions")
+      .insert(insertPayload)
+      .select()
+      .single();
+    data = retry.data;
+    error = retry.error;
+  }
+
   if (error) throw error;
+
+  await logActivity({
+    action: "BORROW",
+    entity_type: "transaction",
+    entity_id: (data as BorrowingTransaction)?.id ?? null,
+    description: `"${book.title}" borrowed by ${student.name}${resolved ? ` (handled by ${resolved.name}, ${resolved.role})` : ""}.`,
+    metadata: {
+      book_id: bookId,
+      book_title: book.title,
+      student_id: student.id,
+      student_name: student.name,
+    },
+    actor: resolved,
+  });
+
   return data;
 }
 
 /** Return a book and calculate fine if overdue */
-export async function returnBook(transactionId: string): Promise<BorrowingTransaction> {
+export async function returnBook(transactionId: string, actor?: ActorInfo | null): Promise<BorrowingTransaction> {
+  const resolved = actor ?? (await getCurrentActor().catch(() => null));
+
   // First, calculate the fine
   const { data: transaction, error: fetchError } = await supabase
     .from("borrowing_transactions")
-    .select("due_date")
+    .select("due_date, students(name), books(title)")
     .eq("id", transactionId)
     .single();
 
@@ -190,20 +244,162 @@ export async function returnBook(transactionId: string): Promise<BorrowingTransa
   const fineAmount = Math.min(daysOverdue * fineRate, maxFine);
 
   // Update the transaction with return date and fine
-  const { data, error } = await supabase
+  const updatePayload: Record<string, unknown> = {
+    status: "Returned",
+    date_returned: now.toISOString(),
+    fine_amount: fineAmount,
+    ...handledByColumns(resolved),
+  };
+
+  let { data, error } = await supabase
     .from("borrowing_transactions")
-    .update({
-      status: "Returned",
-      date_returned: now.toISOString(),
-      fine_amount: fineAmount,
-    })
+    .update(updatePayload)
     .eq("id", transactionId)
     .eq("status", "Active")
     .select()
     .single();
 
+  // Pre-005-migration DBs lack the handled_by_* columns — retry without them.
+  if (error && isMissingColumnError(error)) {
+    delete updatePayload.handled_by_staff_id;
+    delete updatePayload.handled_by_name;
+    delete updatePayload.handled_by_role;
+    const retry = await supabase
+      .from("borrowing_transactions")
+      .update(updatePayload)
+      .eq("id", transactionId)
+      .eq("status", "Active")
+      .select()
+      .single();
+    data = retry.data;
+    error = retry.error;
+  }
+
   if (error) throw error;
+
+  const txAny = transaction as unknown as {
+    students?: { name?: string } | null;
+    books?: { title?: string } | null;
+  };
+  const bookTitle = txAny.books?.title ?? "book";
+  const studentName = txAny.students?.name ?? "student";
+
+  await logActivity({
+    action: "RETURN",
+    entity_type: "transaction",
+    entity_id: transactionId,
+    description:
+      `"${bookTitle}" returned by ${studentName}` +
+      (fineAmount > 0 ? ` (overdue fine ₱${fineAmount.toFixed(2)})` : " (no fine)") +
+      (resolved ? ` — handled by ${resolved.name}, ${resolved.role}` : ""),
+    metadata: {
+      book_title: bookTitle,
+      student_name: studentName,
+      fine_amount: fineAmount,
+    },
+    actor: resolved,
+  });
+
   return data;
+}
+
+// ── Manual Edit / Delete (Transactions page) ────────────────
+
+export interface TransactionEditInput {
+  due_date?: string;
+  fine_amount?: number;
+  fine_paid?: boolean;
+}
+
+/** Edit a transaction (due date / fine). Restricted to Librarian/Admin in the UI. */
+export async function updateTransactionDetails(
+  id: string,
+  updates: TransactionEditInput,
+  actor?: ActorInfo | null
+): Promise<BorrowingTransaction> {
+  const resolved = actor ?? (await getCurrentActor().catch(() => null));
+
+  const { data: current } = await supabase
+    .from("borrowing_transactions")
+    .select("due_date, fine_amount, fine_paid, students(name), books(title)")
+    .eq("id", id)
+    .single();
+
+  const payload: Record<string, unknown> = {};
+  if (updates.due_date !== undefined) {
+    const due = new Date(updates.due_date);
+    if (Number.isNaN(+due)) throw new Error("Invalid due date.");
+    payload.due_date = due.toISOString();
+  }
+  if (updates.fine_amount !== undefined) payload.fine_amount = updates.fine_amount;
+  if (updates.fine_paid !== undefined) payload.fine_paid = updates.fine_paid;
+  if (Object.keys(payload).length === 0) throw new Error("Nothing to update.");
+
+  const { data, error } = await supabase
+    .from("borrowing_transactions")
+    .update(payload)
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  const cur = (current ?? {}) as {
+    students?: { name?: string } | null;
+    books?: { title?: string } | null;
+  };
+  await logActivity({
+    action: "EDIT",
+    entity_type: "transaction",
+    entity_id: id,
+    description: `Edited transaction: "${cur.books?.title ?? id}" / ${cur.students?.name ?? "student"} (changed: ${Object.keys(payload).join(", ")}).`,
+    metadata: { changed_fields: Object.keys(payload), updates: payload },
+    actor: resolved,
+  });
+
+  return data;
+}
+
+/** Delete (void) a transaction. Archived first; frees the book if still out. */
+export async function deleteTransaction(id: string, actor?: ActorInfo | null): Promise<void> {
+  const resolved = actor ?? (await getCurrentActor().catch(() => null));
+
+  const { data: current, error: fetchError } = await supabase
+    .from("borrowing_transactions")
+    .select("*, students(name), books(title)")
+    .eq("id", id)
+    .single();
+
+  if (fetchError || !current) throw new Error("Transaction not found.");
+
+  const cur = current as BorrowingTransaction & {
+    students?: { name?: string } | null;
+    books?: { title?: string } | null;
+  };
+
+  await archiveRecord({
+    entity_type: "transaction",
+    entity_id: id,
+    data: current as unknown as Record<string, unknown>,
+    actor: resolved,
+  });
+
+  // No delete-trigger resets the book, so free it manually when still out.
+  if (cur.status === "Active" || cur.status === "Overdue") {
+    await supabase.from("books").update({ status: "Available" }).eq("id", cur.book_id);
+  }
+
+  const { error } = await supabase.from("borrowing_transactions").delete().eq("id", id);
+  if (error) throw error;
+
+  await logActivity({
+    action: "DELETE",
+    entity_type: "transaction",
+    entity_id: id,
+    description: `Deleted transaction: "${cur.books?.title ?? cur.book_id}" / ${cur.students?.name ?? cur.student_id} (moved to archive${cur.status === "Active" || cur.status === "Overdue" ? "; book marked Available" : ""}).`,
+    metadata: { book_title: cur.books?.title, student_name: cur.students?.name, status: cur.status },
+    actor: resolved,
+  });
 }
 
 // ── Overdue ───────────────────────────────────────────────────

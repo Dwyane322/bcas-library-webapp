@@ -8,6 +8,7 @@ import { getFineSettings, updateFineSettings } from "@/lib/supabase/fines";
 import { getSchoolYears, createSchoolYear, setActiveSchoolYear, deleteSchoolYear } from "@/lib/supabase/school-years";
 import { getStaff, createStaff, updateStaff, deleteStaff, setStaffPassword } from "@/lib/supabase/staff";
 import { getSession } from "@/app/auth/actions";
+import { canManageSettings, STAFF_RESTRICTED_MESSAGE } from "@/lib/permissions";
 import type { FineSetting, SchoolYear, Staff, StaffRole } from "@/lib/types";
 
 export default function SettingsPage() {
@@ -62,7 +63,7 @@ export default function SettingsPage() {
   }
 
   async function handleSaveFine() {
-    if (!fineSettings) return;
+    if (!fineSettings || !canManage) return;
     setSavingFine(true);
     try {
       await updateFineSettings(fineSettings.id, {
@@ -76,6 +77,10 @@ export default function SettingsPage() {
   }
 
   async function handleAddYear() {
+    if (!canManage) {
+      setModalError(STAFF_RESTRICTED_MESSAGE);
+      return;
+    }
     if (!newYearName || !newYearStart || !newYearEnd) {
       setModalError("Year name, start date, and end date are required.");
       return;
@@ -102,6 +107,7 @@ export default function SettingsPage() {
   }
 
   async function handleSetActiveYear(id: string) {
+    if (!canManage) return;
     try {
       await setActiveSchoolYear(id);
       await loadData();
@@ -111,7 +117,7 @@ export default function SettingsPage() {
   }
 
   async function handleDeleteYear() {
-    if (!yearToDelete) return;
+    if (!yearToDelete || !canManage) return;
     setModalBusy(true);
     try {
       await deleteSchoolYear(yearToDelete.id);
@@ -185,6 +191,9 @@ export default function SettingsPage() {
   ];
 
   const filteredTabs = tabs.filter(t => !t.adminOnly || session?.role === "Admin");
+  // Staff accounts are read-only here; while the session loads we assume
+  // full access so Librarian/Admin UI doesn't flicker into read-only mode.
+  const canManage = session ? canManageSettings(session.role) : true;
 
   return (
     <>
@@ -214,6 +223,11 @@ export default function SettingsPage() {
       {activeTab === "fines" && (
         <div className="bg-white rounded-xl border border-slate-200 p-6">
           <h3 className="text-lg font-semibold text-slate-800 mb-4">Fine Configuration</h3>
+          {!canManage && (
+            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800">
+              {STAFF_RESTRICTED_MESSAGE} These settings are read-only for your account.
+            </div>
+          )}
           <p className="text-sm text-slate-600 mb-6">
             Configure the fine rate for overdue books. Fines are calculated per day overdue.
           </p>
@@ -228,7 +242,8 @@ export default function SettingsPage() {
                 min="0"
                 value={fineRate}
                 onChange={(e) => setFineRate(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                disabled={!canManage}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 disabled:bg-slate-100 disabled:text-slate-400"
               />
             </div>
             <div>
@@ -241,17 +256,20 @@ export default function SettingsPage() {
                 min="0"
                 value={maxFine}
                 onChange={(e) => setMaxFine(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                disabled={!canManage}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 disabled:bg-slate-100 disabled:text-slate-400"
               />
             </div>
           </div>
-          <button
-            onClick={handleSaveFine}
-            disabled={savingFine}
-            className="mt-6 px-4 py-2 rounded-lg bg-emerald-700 text-white text-sm font-medium hover:bg-emerald-800 transition-colors disabled:opacity-50"
-          >
-            {savingFine ? "Saving..." : "Save Settings"}
-          </button>
+          {canManage && (
+            <button
+              onClick={handleSaveFine}
+              disabled={savingFine}
+              className="mt-6 px-4 py-2 rounded-lg bg-emerald-700 text-white text-sm font-medium hover:bg-emerald-800 transition-colors disabled:opacity-50"
+            >
+              {savingFine ? "Saving..." : "Save Settings"}
+            </button>
+          )}
         </div>
       )}
 
@@ -260,14 +278,21 @@ export default function SettingsPage() {
         <div className="bg-white rounded-xl border border-slate-200 p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-slate-800">School Years</h3>
-            <button
-              onClick={() => { setModalError(null); setShowAddYear(true); }}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-700 text-white text-sm font-medium hover:bg-emerald-800 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              Add Year
-            </button>
+            {canManage && (
+              <button
+                onClick={() => { setModalError(null); setShowAddYear(true); }}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-700 text-white text-sm font-medium hover:bg-emerald-800 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Add Year
+              </button>
+            )}
           </div>
+          {!canManage && (
+            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800">
+              {STAFF_RESTRICTED_MESSAGE} School years are read-only for your account.
+            </div>
+          )}
           <p className="text-sm text-slate-600 mb-4">
             Manage school years for archiving circulation records. Only one year can be active at a time.
           </p>
@@ -292,15 +317,15 @@ export default function SettingsPage() {
                     <span className="px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 text-xs font-medium">
                       Active
                     </span>
-                  ) : (
+                  ) : canManage ? (
                     <button
                       onClick={() => handleSetActiveYear(year.id)}
                       className="px-2 py-1 rounded text-xs font-medium text-emerald-700 hover:bg-emerald-100"
                     >
                       Set Active
                     </button>
-                  )}
-                  {!year.is_active && (
+                  ) : null}
+                  {!year.is_active && canManage && (
                     <button
                       onClick={() => { setModalError(null); setYearToDelete(year); }}
                       className="p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50"
