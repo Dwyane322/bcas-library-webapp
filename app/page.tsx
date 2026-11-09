@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Mail, Lock, Eye, EyeOff } from "lucide-react";
 import { login } from "@/app/auth/actions";
 import { useRouter } from "next/navigation";
+import { clearLastActivity, LOGOUT_REASON_KEY } from "@/hooks/use-idle-logout";
 
 export default function BCASLibraryLogin() {
   const [showPassword, setShowPassword] = useState(false);
@@ -13,13 +14,35 @@ export default function BCASLibraryLogin() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
+  const loggedOutForIdle = useSyncExternalStore(
+    () => () => {},
+    () => {
+      try {
+        return sessionStorage.getItem(LOGOUT_REASON_KEY) === "idle";
+      } catch {
+        return false;
+      }
+    },
+    () => false
+  );
+  const [idleNoticeDismissed, setIdleNoticeDismissed] = useState(false);
+  const idleNotice =
+    loggedOutForIdle && !idleNoticeDismissed && !error
+      ? "You were logged out due to inactivity. Please sign in again."
+      : null;
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
+    setIdleNoticeDismissed(true);
+    try {
+      sessionStorage.removeItem(LOGOUT_REASON_KEY);
+    } catch {}
     setLoading(true);
     try {
       const result = await login(staffId, password);
       if (result.success) {
+        clearLastActivity();
         router.push("/user");
       } else {
         setError(result.error ?? "Login failed.");
@@ -95,6 +118,7 @@ export default function BCASLibraryLogin() {
             </div>
           </div>
           {error && <div className="text-sm text-red-600">{error}</div>}
+          {idleNotice && <div className="text-sm text-amber-600">{idleNotice}</div>}
           <button
             type="submit"
             disabled={loading}

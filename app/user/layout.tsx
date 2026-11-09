@@ -27,6 +27,11 @@ import {
 } from "@/lib/supabase";
 import type { NotificationWithDetails } from "@/lib/types";
 import { ConfirmModal } from "@/components/ui/modal";
+import {
+  useIdleLogout,
+  clearLastActivity,
+  LOGOUT_REASON_KEY,
+} from "@/hooks/use-idle-logout";
 
 const sidebarNav: {
   label: string;
@@ -95,9 +100,25 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
     }
   }, []);
 
+  const handleIdleLogout = useCallback(async () => {
+    try {
+      sessionStorage.setItem(LOGOUT_REASON_KEY, "idle");
+    } catch {}
+    clearLastActivity();
+    try {
+      await logout();
+    } finally {
+      router.replace("/");
+      router.refresh();
+    }
+  }, [router]);
+
+  useIdleLogout(handleIdleLogout);
+
   const handleLogout = async () => {
     setLoggingOut(true);
     try {
+      clearLastActivity();
       await logout();
       router.push("/");
     } finally {
