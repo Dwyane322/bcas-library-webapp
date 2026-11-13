@@ -13,6 +13,7 @@ import {
   Download,
   Trash2,
   Printer,
+  X,
 } from "lucide-react";
 import { getBooks, createBook, updateBook, deleteBook } from "@/lib/supabase/books";
 import { getClassifications } from "@/lib/supabase/classifications";
@@ -176,6 +177,8 @@ export default function BooksPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const [printingBook, setPrintingBook] = useState<BookWithClassification | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkPrint, setShowBulkPrint] = useState(false);
 
   const [deletingBook, setDeletingBook] = useState<BookWithClassification | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -225,6 +228,43 @@ export default function BooksPage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const start = (page - 1) * perPage + 1;
   const end = Math.min(page * perPage, filtered.length);
+  const pageBooks = filtered.slice((page - 1) * perPage, page * perPage);
+
+  // Selection survives paging/filtering; derive from `books` so deleted ids drop out
+  const selectedBooks = books.filter((b) => selectedIds.has(b.id));
+  const pageSelectedCount = pageBooks.filter((b) => selectedIds.has(b.id)).length;
+  const allPageSelected = pageBooks.length > 0 && pageSelectedCount === pageBooks.length;
+  const allFilteredSelected = filtered.length > 0 && filtered.every((b) => selectedIds.has(b.id));
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const togglePageSelection = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      pageBooks.forEach((b) => (allPageSelected ? next.delete(b.id) : next.add(b.id)));
+      return next;
+    });
+  };
+
+  const selectAllFiltered = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      filtered.forEach((b) => next.add(b.id));
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  // Books rendered on the print-only label sheet
+  const labelBooks = printingBook ? [printingBook] : showBulkPrint ? selectedBooks : [];
 
   const openAddModal = () => {
     setForm(emptyForm);
@@ -345,6 +385,13 @@ export default function BooksPage() {
   };
 
   const printLabel = () => {
+    // Hide the inventory list so only the label sheet prints
+    document.body.classList.add("print-label-mode");
+    const cleanup = () => {
+      document.body.classList.remove("print-label-mode");
+      window.removeEventListener("afterprint", cleanup);
+    };
+    window.addEventListener("afterprint", cleanup);
     window.print();
   };
 
@@ -478,6 +525,19 @@ export default function BooksPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
+                  <th className="w-10 pl-4 pr-0 py-3">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all books on this page"
+                      checked={allPageSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = pageSelectedCount > 0 && !allPageSelected;
+                      }}
+                      onChange={togglePageSelection}
+                      disabled={loading || pageBooks.length === 0}
+                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                    />
+                  </th>
                   <th className="text-left px-4 py-3 font-semibold text-slate-500 hidden sm:table-cell">
                     Preview
                   </th>
@@ -501,22 +561,33 @@ export default function BooksPage() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center text-slate-400">
+                    <td colSpan={7} className="px-4 py-12 text-center text-slate-400">
                       Loading books...
                     </td>
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center text-slate-400">
+                    <td colSpan={7} className="px-4 py-12 text-center text-slate-400">
                       No books found.
                     </td>
                   </tr>
                 ) : (
-                  filtered.slice((page - 1) * perPage, page * perPage).map((book) => (
+                  pageBooks.map((book) => (
                     <tr
                       key={book.id}
-                      className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50 transition-colors"
+                      className={`border-b border-slate-50 last:border-0 transition-colors ${
+                        selectedIds.has(book.id) ? "bg-emerald-50/50" : "hover:bg-slate-50/50"
+                      }`}
                     >
+                      <td className="w-10 pl-4 pr-0 py-4">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${book.title}`}
+                          checked={selectedIds.has(book.id)}
+                          onChange={() => toggleSelect(book.id)}
+                          className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                        />
+                      </td>
                       <td className="px-4 py-4 hidden sm:table-cell">
                         <div className="w-10 h-14 rounded bg-slate-100 border border-slate-200 flex items-center justify-center">
                           <BookCopy className="w-5 h-5 text-slate-300" />
@@ -635,6 +706,47 @@ export default function BooksPage() {
         </div>
       </div>
 
+      {/* Floating bulk-action bar (keeps the table from shifting) */}
+      {selectedBooks.length > 0 && (
+        <>
+          {/* Spacer so the bar never covers the pagination */}
+          <div className="h-20 no-print" aria-hidden />
+          <div
+            role="toolbar"
+            aria-label="Bulk actions"
+            className="fixed z-40 bottom-4 inset-x-4 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 lg:left-[calc(50%+8rem)] flex items-center gap-3 sm:gap-4 pl-4 pr-2 py-2 rounded-xl bg-slate-900 text-white shadow-2xl animate-fade-in-up no-print"
+          >
+            <div className="flex-1 sm:flex-none min-w-0 text-sm whitespace-nowrap">
+              <span className="font-semibold">{selectedBooks.length}</span> selected
+              {!allFilteredSelected && filtered.length > pageBooks.length && (
+                <button
+                  onClick={selectAllFiltered}
+                  className="hidden sm:inline ml-3 text-emerald-300 hover:text-emerald-200 font-medium"
+                >
+                  Select all {filtered.length}
+                </button>
+              )}
+            </div>
+            <div className="h-6 w-px bg-slate-700 hidden sm:block" />
+            <button
+              onClick={() => setShowBulkPrint(true)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-500 transition-colors whitespace-nowrap"
+            >
+              <Printer className="w-4 h-4" />
+              Print QR Codes
+            </button>
+            <button
+              onClick={clearSelection}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              title="Clear selection"
+              aria-label="Clear selection"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </>
+      )}
+
       {/* Add Book Modal */}
       <BookFormModal
         open={showAddModal}
@@ -694,7 +806,7 @@ export default function BooksPage() {
         }
       >
         {printingBook && (
-          <div data-print-label className="flex flex-col items-center">
+          <div className="flex flex-col items-center">
             <QRCodeSVG
               value={getQrUrl(printingBook.id)}
               size={180}
@@ -709,6 +821,66 @@ export default function BooksPage() {
           </div>
         )}
       </Modal>
+
+      {/* Bulk Print QR Modal */}
+      <Modal
+        open={showBulkPrint && !printingBook}
+        onClose={() => setShowBulkPrint(false)}
+        title="Print QR Codes"
+        subtitle={`${selectedBooks.length} label${selectedBooks.length === 1 ? "" : "s"} will be printed`}
+        size="lg"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setShowBulkPrint(false)}
+              className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={printLabel}
+              disabled={selectedBooks.length === 0}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-700 text-white text-sm font-semibold hover:bg-emerald-800 transition-colors disabled:opacity-50"
+            >
+              <Printer className="w-4 h-4" />
+              Print {selectedBooks.length} Label{selectedBooks.length === 1 ? "" : "s"}
+            </button>
+          </>
+        }
+      >
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {selectedBooks.map((book) => (
+            <div key={book.id} className="relative flex flex-col items-center p-3 rounded-lg border border-slate-200">
+              <button
+                onClick={() => toggleSelect(book.id)}
+                className="absolute top-1 right-1 p-1 rounded text-slate-300 hover:text-red-600 hover:bg-red-50 transition-colors"
+                title="Remove from print"
+                aria-label={`Remove ${book.title} from print`}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+              <QRCodeSVG value={getQrUrl(book.id)} size={96} level="M" includeMargin />
+              <p className="mt-2 text-xs font-semibold text-slate-900 text-center line-clamp-2">{book.title}</p>
+              <p className="text-[11px] text-slate-400 font-mono text-center break-all">{book.accession_number}</p>
+            </div>
+          ))}
+        </div>
+      </Modal>
+
+      {/* Print-only QR label sheet (single or bulk) */}
+      {labelBooks.length > 0 && (
+        <div data-print-labels className="hidden">
+          {labelBooks.map((book) => (
+            <div key={book.id} className="qr-label">
+              <QRCodeSVG value={getQrUrl(book.id)} size={140} level="M" includeMargin />
+              <p className="qr-label-title">{book.title}</p>
+              <p className="qr-label-meta">{book.author}</p>
+              <p className="qr-label-meta">Accession #: {book.accession_number}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
